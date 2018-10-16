@@ -2,6 +2,8 @@ package socketio
 
 import (
 	"sync"
+	"time"
+	"fmt"
 )
 
 // BroadcastAdaptor is the adaptor to handle broadcasts.
@@ -19,7 +21,16 @@ type BroadcastAdaptor interface {
 	Len(room string) int
 }
 
+const consumeRoutine = 10
+
 var newBroadcast = newBroadcastDefault
+var sendCh = make(chan *sendParameter, 5000)
+
+type sendParameter struct {
+	s     Socket
+	event string
+	args  interface{}
+}
 
 type broadcast struct {
 	m map[string]map[string]Socket
@@ -27,10 +38,37 @@ type broadcast struct {
 	sync.RWMutex
 }
 
+func (b *broadcast) writeCh(s *sendParameter) int {
+	select {
+	case sendCh <- s:
+		fmt.Printf("writeCh data:%+v",*s)
+		return 0
+	case <-time.After(time.Second * 2): //写入超时
+		return -1
+	}
+	return 0
+}
+
+func (b *broadcast) readCh() {
+	for {
+		d, isClose := <-sendCh
+		if !isClose {
+			break
+		}
+		fmt.Printf("readCh data:%+v",d)
+		d.s.Emit(d.event, d.args)
+	}
+	return
+}
+
 func newBroadcastDefault() BroadcastAdaptor {
-	return &broadcast{
+	b := &broadcast{
 		m: make(map[string]map[string]Socket),
 	}
+	for i := 0; i < consumeRoutine; i++ {
+		go b.readCh()
+	}
+	return b
 }
 
 func (b *broadcast) Join(room string, socket Socket) error {
@@ -71,7 +109,14 @@ func (b *broadcast) Send(ignore Socket, room, event string, args ...interface{})
 		if ignore != nil && ignore.Id() == id {
 			continue
 		}
-		s.Emit(event, args...)
+		m := &sendParameter{
+			s:     s,
+			event: event,
+			args:  args,
+		}
+		//写入管道
+		b.writeCh(m)
+		//s.Emit(event, args...)
 	}
 	b.RUnlock()
 	return nil
