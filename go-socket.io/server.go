@@ -2,6 +2,7 @@ package socketio
 
 import (
 	"github.com/zhouruisong/gosocket/go-engine.io"
+	f1 "github.com/zhouruisong/fileLogger"
 	"net/http"
 	"time"
 )
@@ -25,6 +26,10 @@ func NewServer(transportNames []string) (*Server, error) {
 	}
 	go ret.loop()
 	return ret, nil
+}
+
+func (s *Server) SetLogger(l *f1.FileLogger) {
+	s.namespace.broadcast.InjectLogger(l)
 }
 
 // SetPingTimeout sets the timeout of a connection ping. When it times out, the server will close the connection with the client. Default is 60s.

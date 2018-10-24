@@ -3,7 +3,7 @@ package socketio
 import (
 	"sync"
 	"time"
-	"fmt"
+	f1 "github.com/zhouruisong/fileLogger"
 )
 
 // BroadcastAdaptor is the adaptor to handle broadcasts.
@@ -19,18 +19,13 @@ type BroadcastAdaptor interface {
 
 	//Len socket in room
 	Len(room string) int
+
+	//inject logger
+	InjectLogger(l *f1.FileLogger)
 }
 
-const consumeRoutine = 10
-
+var bLogger *f1.FileLogger
 var newBroadcast = newBroadcastDefault
-var sendCh = make(chan *sendParameter, 5000)
-
-type sendParameter struct {
-	s     Socket
-	event string
-	args  interface{}
-}
 
 type broadcast struct {
 	m map[string]map[string]Socket
@@ -38,87 +33,96 @@ type broadcast struct {
 	sync.RWMutex
 }
 
-func (b *broadcast) writeCh(s *sendParameter) int {
-	select {
-	case sendCh <- s:
-		fmt.Printf("writeCh data:%+v",*s)
-		return 0
-	case <-time.After(time.Second * 2): //写入超时
-		return -1
-	}
-	return 0
-}
-
-func (b *broadcast) readCh() {
-	for {
-		d, isClose := <-sendCh
-		if !isClose {
-			break
-		}
-		fmt.Printf("readCh data:%+v",d)
-		d.s.Emit(d.event, d.args)
-	}
-	return
-}
-
 func newBroadcastDefault() BroadcastAdaptor {
 	b := &broadcast{
 		m: make(map[string]map[string]Socket),
 	}
-	for i := 0; i < consumeRoutine; i++ {
-		go b.readCh()
-	}
 	return b
+}
+
+func (b *broadcast) InjectLogger(l *f1.FileLogger) {
+	bLogger = l
 }
 
 func (b *broadcast) Join(room string, socket Socket) error {
 	b.Lock()
+	defer b.Unlock()
+
+	soid := socket.Id()
 	sockets, ok := b.m[room]
 	if !ok {
 		sockets = make(map[string]Socket)
 	}
-	sockets[socket.Id()] = socket
+	_, ok1 := sockets[soid]
+	if ok1 {
+		//bLogger.I(3, "exist in map join soid:%v", soid)
+		return nil
+	}
+	sockets[soid] = socket
+	b.n = len(sockets)
 	b.m[room] = sockets
-	b.n = len(b.m[room])
-	b.Unlock()
+	bLogger.I(3, "join soid:%v", soid)
 	return nil
 }
 
 func (b *broadcast) Leave(room string, socket Socket) error {
 	b.Lock()
 	defer b.Unlock()
+
+	soid := socket.Id()
 	sockets, ok := b.m[room]
 	if !ok {
+		b.n = 0
 		return nil
 	}
-	delete(sockets, socket.Id())
+	_, ok1 := sockets[soid]
+	if !ok1 {
+		if b.n == 0 {
+			b.n = 0
+		} else {
+			b.n--
+		}
+		//bLogger.I(3, "not in map,soid:%v,current n:%v,len:%v,room:%v", soid, b.n, len(sockets), room)
+		return nil
+	}
+	delete(sockets, soid)
+	b.n = len(sockets)
 	if len(sockets) == 0 {
 		delete(b.m, room)
-		b.n = len(b.m[room])
+		b.n = 0
 		return nil
 	}
 	b.m[room] = sockets
-	b.n = len(b.m[room])
+	bLogger.I(3, "leave soid:%v,current n:%v", soid, b.n)
 	return nil
 }
 
 func (b *broadcast) Send(ignore Socket, room, event string, args ...interface{}) error {
 	b.RLock()
+	defer b.RUnlock()
+
 	sockets := b.m[room]
-	for id, s := range sockets {
+	// 开始时间
+	start := time.Now()
+	for id, _ := range sockets {
 		if ignore != nil && ignore.Id() == id {
 			continue
 		}
-		m := &sendParameter{
-			s:     s,
-			event: event,
-			args:  args,
+
+		//发送失败
+		if err := sockets[id].Emit(event, args...); err != nil {
+			bLogger.W(3, "Emit failed,soid:%v,err:%v,event:%+v,args:%v",
+				id, err, event, args)
 		}
-		//写入管道
-		b.writeCh(m)
-		//s.Emit(event, args...)
 	}
-	b.RUnlock()
+	// 结束时间
+	end := time.Now()
+	latency := end.Sub(start) // us
+	//消耗时间大于300ms打印日志
+	if latency.Nanoseconds()/1000000 > 400 {
+		bLogger.I(3, "=====time cost bigger 300ms,cost : %s ====", latency)
+	}
+
 	return nil
 }
 
