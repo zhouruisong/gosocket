@@ -32,6 +32,10 @@ func (s *Server) SetLogger(l *f1.FileLogger) {
 	s.namespace.broadcast.InjectLogger(l)
 }
 
+func (s *Server) DisAllConnetcion(room string) {
+	s.namespace.broadcast.DisAllConnection(room)
+}
+
 // SetPingTimeout sets the timeout of a connection ping. When it times out, the server will close the connection with the client. Default is 60s.
 func (s *Server) SetPingTimeout(t time.Duration) {
 	s.eio.SetPingTimeout(t)
