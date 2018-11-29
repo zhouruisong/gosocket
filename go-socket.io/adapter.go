@@ -2,7 +2,7 @@ package socketio
 
 import (
 	"sync"
-	"time"
+	//"time"
 	f1 "github.com/zhouruisong/fileLogger"
 )
 
@@ -30,19 +30,21 @@ type BroadcastAdaptor interface {
 var (
 	bLogger      *f1.FileLogger
 	newBroadcast = newBroadcastDefault
-	userMap      sync.Map
+	//userMap      sync.Map
 )
 
 const groupNumber = 500
 
 type broadcast struct {
-	m map[string]map[string]Socket
+	m    map[string]map[string]Socket
+	user map[string]int
 	sync.RWMutex
 }
 
 func newBroadcastDefault() BroadcastAdaptor {
 	b := &broadcast{
-		m: make(map[string]map[string]Socket),
+		m:    make(map[string]map[string]Socket),
+		user: make(map[string]int),
 	}
 	return b
 }
@@ -52,22 +54,26 @@ func (b *broadcast) InjectLogger(l *f1.FileLogger) {
 }
 
 func (b *broadcast) DisAllConnection(room string) {
+	bLogger.I(3, "DisAllConnection room=%v", room)
+	r := ":" + room
+	sockets, _ := b.m[r]
+	for id, _ := range sockets {
+		bLogger.I(3, "=====leave id:%v,room=%v", id, room)
+		sockets[id].Leave(room)
+		//sockets[id].Disconnect()
+	}
+
 	b.Lock()
 	defer b.Unlock()
-
-	sockets, _ := b.m[room]
-	for id, _ := range sockets {
-		sockets[id].Leave(room)
-		sockets[id].Disconnect()
-	}
-	b.m[room] = nil
-	userMap.Store(room, 0)
-	//bLogger.I(3, "room:%v,current len:%v", room, b.n)
+	b.m[r] = nil
+	b.user[r] = 0
+	bLogger.I(3, "DisAllConnection ok room=%v", room)
 }
 
 func (b *broadcast) Join(room string, socket Socket) error {
 	b.Lock()
 	defer b.Unlock()
+	bLogger.I(3, "Join room=%v", room)
 
 	soid := socket.Id()
 	sockets, ok := b.m[room]
@@ -80,62 +86,42 @@ func (b *broadcast) Join(room string, socket Socket) error {
 		return nil
 	}
 	sockets[soid] = socket
-	userMap.Store(room, len(sockets))
+	b.user[room] = len(sockets)
 	b.m[room] = sockets
 
-	n, ok := userMap.Load(room)
-	if !ok {
-		bLogger.W(3, "can not load key=%v", room)
-		return nil
-	}
-	if n == nil {
-		bLogger.I(3, "===n is null")
-		return nil
-	}
-
 	bLogger.I(3, "===join len=%v", len(sockets))
-	bLogger.I(3, "===join num=%v,room=%v", n.(int), room)
+	bLogger.I(3, "===join num=%v,room=%v", b.user[room], room)
 	return nil
 }
 
 func (b *broadcast) Leave(room string, socket Socket) error {
 	b.Lock()
 	defer b.Unlock()
+	bLogger.I(3, "Leave room=%v", room)
 
 	soid := socket.Id()
 	sockets, ok := b.m[room]
 	if !ok {
-		userMap.Store(room, 0)
+		b.user[room] = 0
 		return nil
 	}
 	_, ok1 := sockets[soid]
 	if !ok1 {
-		n, ok := userMap.Load(room)
-		if !ok {
-			bLogger.W(3, "can not load key=%v", room)
-			return nil
-		}
-		if n == nil {
-			bLogger.W(3, "n is null key=%v", room)
-			userMap.Store(room, 0)
-			return nil
-		}
-
-		num := n.(int)
+		num := b.user[room]
 		if num == 0 {
-			userMap.Store(room, 0)
+			b.user[room] = 0
 		} else {
 			num--
-			userMap.Store(room, num)
+			b.user[room] = num
 		}
 		//bLogger.I(3, "not in map,soid:%v,current n:%v,len:%v,room:%v", soid, b.n, len(sockets), room)
 		return nil
 	}
 	delete(sockets, soid)
-	userMap.Store(room, len(sockets))
+	b.user[room] = len(sockets)
 	if len(sockets) == 0 {
 		delete(b.m, room)
-		userMap.Store(room, 0)
+		b.user[room] = 0
 		return nil
 	}
 	b.m[room] = sockets
@@ -147,8 +133,10 @@ func (b *broadcast) Send(ignore Socket, room, event string, args ...interface{})
 	defer b.RUnlock()
 	sockets := b.m[room]
 
+	//bLogger.I(3, "room=%v", room)
+
 	// 开始时间
-	start := time.Now()
+	//start := time.Now()
 	var sliceSo []Socket
 	for id, _ := range sockets {
 		if ignore != nil && ignore.Id() == id {
@@ -157,17 +145,7 @@ func (b *broadcast) Send(ignore Socket, room, event string, args ...interface{})
 		sliceSo = append(sliceSo, sockets[id])
 	}
 
-	n, ok := userMap.Load(":" + room)
-	if !ok {
-		bLogger.W(3, "Load key:%v failed", ":"+room)
-		return nil
-	}
-	if n == nil {
-		bLogger.W(3, "Load key:%v failed", ":"+room)
-		return nil
-	}
-
-	num := n.(int)
+	num := b.user[room]
 	group := num / groupNumber
 	left := num % groupNumber
 	var st int
@@ -197,23 +175,18 @@ func (b *broadcast) Send(ignore Socket, room, event string, args ...interface{})
 	}
 	wt.Wait()
 	// 结束时间
-	end := time.Now()
-	latency := end.Sub(start) // us
-	//消耗时间
-	bLogger.I(3, "cost: %s", latency)
+	//end := time.Now()
+	//latency := end.Sub(start) // us
+	////消耗时间
+	//bLogger.I(3, "cost: %s", latency)
 	return nil
 }
 
 func (b *broadcast) Len(room string) int {
+	b.RLock()
+	defer b.RUnlock()
 	//bLogger.I(3, "room=%v", room)
-	n, ok := userMap.Load(":" + room)
-	if !ok {
-		bLogger.W(3, "Load key:%v failed", ":"+room)
-	}
-	if n == nil {
-		bLogger.W(3, "Load key:%v failed", ":"+room)
-		return 0
-	}
-	bLogger.I(3, "room len:%v", n)
-	return n.(int)
+	n := b.user[":"+room]
+	//bLogger.I(3, "room len:%v", n)
+	return n
 }
