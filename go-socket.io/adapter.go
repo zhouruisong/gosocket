@@ -57,11 +57,20 @@ func (b *broadcast) DisAllConnection(room string) {
 	bLogger.I(3, "DisAllConnection room=%v", room)
 	r := ":" + room
 	sockets, _ := b.m[r]
+	bLogger.I(3, "Leave room=%v", room)
 	for id, _ := range sockets {
-		bLogger.I(3, "=====leave id:%v,room=%v", id, room)
+		//bLogger.I(3, "=====leave id:%v,room=%v", id, room)
 		sockets[id].Leave(room)
 		//sockets[id].Disconnect()
 	}
+
+	bLogger.I(3, "DisAllConnection room=%v", room)
+	//此处代码不能打开，会出现挂机情况，还未修改
+	//for id, _ := range sockets {
+	//	//bLogger.I(3, "=====leave id:%v,room=%v", id, room)
+	//	sockets[id].Disconnect()
+	//}
+	//bLogger.I(3, "DisAllConnection room=%v", room)
 
 	b.Lock()
 	defer b.Unlock()
@@ -73,7 +82,7 @@ func (b *broadcast) DisAllConnection(room string) {
 func (b *broadcast) Join(room string, socket Socket) error {
 	b.Lock()
 	defer b.Unlock()
-	bLogger.I(3, "Join room=%v", room)
+	//bLogger.I(3, "Join room=%v", room)
 
 	soid := socket.Id()
 	sockets, ok := b.m[room]
@@ -89,15 +98,15 @@ func (b *broadcast) Join(room string, socket Socket) error {
 	b.user[room] = len(sockets)
 	b.m[room] = sockets
 
-	bLogger.I(3, "===join len=%v", len(sockets))
-	bLogger.I(3, "===join num=%v,room=%v", b.user[room], room)
+	//bLogger.I(3, "===join len=%v", len(sockets))
+	//bLogger.I(3, "===join num=%v,room=%v", b.user[room], room)
 	return nil
 }
 
 func (b *broadcast) Leave(room string, socket Socket) error {
 	b.Lock()
 	defer b.Unlock()
-	bLogger.I(3, "Leave room=%v", room)
+	//bLogger.I(3, "Leave room=%v", room)
 
 	soid := socket.Id()
 	sockets, ok := b.m[room]
