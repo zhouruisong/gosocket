@@ -89,6 +89,12 @@ func (b *broadcast) Join(room string, socket Socket) error {
 	if !ok {
 		sockets = make(map[string]Socket)
 	}
+	
+	if sockets == nil {
+		bLogger.I(3, "nil sockets=%+v", sockets)
+		sockets = make(map[string]Socket)
+	}
+	
 	_, ok1 := sockets[soid]
 	if ok1 {
 		bLogger.I(3, "exist in map join soid=%v", soid)
